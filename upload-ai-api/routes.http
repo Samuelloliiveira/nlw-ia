@@ -17,9 +17,21 @@ Content-Type: audio/mpeg
 ###
 
 # @name create-transcription
-POST http://localhost:3333/videos/404075de-769c-455d-9a80-13affa03403c/transcription
+POST http://localhost:3333/videos/45f9fc86-dd2b-4a66-bab7-4a10c140cc09/transcription
 Content-Type: application/json
 
 {
   "prompt": "acordar, levantar"
+}
+
+###
+
+# @name generate-ai-completion
+POST http://localhost:3333/ai/complete
+Content-Type: application/json
+
+{
+  "videoId": "45f9fc86-dd2b-4a66-bab7-4a10c140cc09",
+  "temperature": 0,
+  "template": "Gere um resumo para essa transcrição do vídeo informada a seguir: '''{transcription}'''"
 }
