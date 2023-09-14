@@ -4,9 +4,22 @@ import { Separator } from './ui/separator'
 import { Label } from './ui/label'
 import { Textarea } from './ui/textarea'
 import { Button } from './ui/button'
+import { getFFmpeg } from '@/lib/ffmpeg'
+import { fetchFile } from '@ffmpeg/util'
+import { api } from '@/lib/axios'
+
+type Status = 'waiting' | 'converting' | 'uploading' | 'generating' | 'success'
+
+const statusMessage = {
+  converting: 'Convertendo...',
+  generating: 'Transcrevendo...',
+  uploading: 'Enviando...',
+  success: 'Sucesso!',
+}
 
 export function VideoInputForm() {
   const [videoFile, setVideoFile] = useState<File | null>(null)
+  const [status, setStatus] = useState<Status>('waiting')
 
   /** useRef serve para acessar a versão de um elemento na DOM */
   const promptInputRef = useRef<HTMLTextAreaElement>(null)
@@ -24,7 +37,50 @@ export function VideoInputForm() {
     setVideoFile(selectedFile)
   }
 
-  function handleUploadVideo(event: FormEvent<HTMLFormElement>) {
+  async function convertVideoToAudio(video: File) {
+    console.log('The conversion started...')
+
+    const ffmpeg = await getFFmpeg()
+
+    /** writeFile coloca o arquivo dentro do contexto do ffmpeg.
+     * Quando usamos WebAssembly é como se o ffmpeg não estivesse
+     * rodando na máquina, é como se estivesse rodando em um contêiner
+     * num ambiente isolado */
+    await ffmpeg.writeFile('input.mp4', await fetchFile(video)) // fetchFile converte o arquivo em uma representação binária
+
+    // ffmpeg.on('log', log => {
+    //   console.log(log)
+    // })
+
+    ffmpeg.on('progress', progress => {
+      console.log('Convert progress: ' + Math.round(progress.progress * 100))
+    })
+
+    await ffmpeg.exec([
+      '-i',
+      'input.mp4',
+      '-map',
+      '0:a',
+      '-b:a',
+      '20k',
+      '-acodec',
+      'libmp3lame',
+      'output.mp3'
+    ])
+
+    const data = await ffmpeg.readFile('output.mp3')
+
+    const audioFileBlob = new Blob([data], { type: 'audio/mpeg' })
+    const audioFile = new File([audioFileBlob], 'audio.mp3', {
+      type: 'audio/mpeg',
+    })
+
+    console.log('Convert finished.')
+
+    return audioFile
+  }
+
+  async function handleUploadVideo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
     const prompt = promptInputRef.current?.value // essa interrogação(?) é porque a Ref demora um tempo para ser criada
@@ -33,7 +89,28 @@ export function VideoInputForm() {
       return
     }
 
-    // converter o vídeo em áudio
+    setStatus('converting')
+
+    const audioFile = await convertVideoToAudio(videoFile)
+
+    const data = new FormData() // o formato recebido no back é multipart/form-data
+
+    //cria um novo campo do tipo file com o valor audioFile
+    data.append('file', audioFile)
+
+    setStatus('uploading')
+
+    const response = await api.post('/videos', data)
+
+    const videoId = response.data.video.id
+
+    setStatus('generating')
+
+    await api.post(`/videos/${videoId}/transcription`, {
+      prompt,
+    })
+
+    setStatus('success')
   }
 
   /** useMemo recebe uma função como parâmetro e
@@ -77,16 +154,26 @@ export function VideoInputForm() {
       <div className="space-y-2">
         <Label htmlFor="transcription_prompt">Prompt de transcrição</Label>
         <Textarea
+          ref={promptInputRef}
+          disabled={status !== 'waiting'}
           id="transcription_prompt"
           className="h-20 leading-relaxed resize-none"
           placeholder="Inclua palavras-chave mencionadas no vídeo e separadas por vírgula(,)"
-          ref={promptInputRef}
         />
       </div>
 
-      <Button type="submit" className="w-full">
-        Carregar vídeo
-        <Upload className="w-4 h-4 ml-2" />
+      <Button
+        data-success={status === 'success'} // data attribute
+        disabled={status !== 'waiting'}
+        type="submit"
+        className="w-full data-[success=true]:bg-emerald-400 data-[success=true]:text-black"
+      >
+        {status === 'waiting' ? (
+          <>
+            Carregar vídeo
+            <Upload className="w-4 h-4 ml-2" />
+          </>
+        ) : statusMessage[status]}
       </Button>
     </form >
   )
